@@ -1,301 +1,183 @@
-const db = require("../database/database");
+const mongoose = require("mongoose");
+
+const projectSchema = new mongoose.Schema(
+  {
+    projectName: { type: String, required: true, trim: true },
+    clientName:  { type: String, required: true, trim: true },
+    phone:       { type: String, default: "" },
+    email:       { type: String, default: "" },
+    address:     { type: String, default: "" },
+    eventType:   { type: String, default: "General" },
+    location:    { type: String, default: "" },
+    startDate:   { type: String, default: "" },
+    endDate:     { type: String, default: "" },
+    totalAmount: { type: Number, required: true, min: 0 },
+    advance:     { type: Number, default: 0 },
+    balance:     { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["Upcoming", "Ongoing", "Completed", "Archived"],
+      default: "Upcoming",
+    },
+    notes: { type: String, default: "" },
+  },
+  { timestamps: true }
+);
+
+const Project = mongoose.model("Project", projectSchema);
+
+// ─── Sort field allowlist ───────────────────────────────────────────────────
+const VALID_SORT_FIELDS = new Set([
+  "projectName", "clientName", "phone", "email", "eventType",
+  "startDate", "endDate", "totalAmount", "advance", "balance",
+  "status", "createdAt", "updatedAt",
+]);
+
+function normalizeSort(sortBy = "createdAt", sortOrder = "DESC") {
+  const field = VALID_SORT_FIELDS.has(sortBy) ? sortBy : "createdAt";
+  const order = String(sortOrder).toUpperCase() === "ASC" ? 1 : -1;
+  return { field, order };
+}
 
 class ProjectModel {
-  /**
-   * Get all projects with optional filtering, sorting, and pagination
-   */
-  static getAllProjects(
-    limit = 50,
-    offset = 0,
-    status = null,
-    sortBy = "createdAt",
-    sortOrder = "DESC",
-    callback
+  static async getAllProjects(
+    limit = 50, offset = 0, status = null,
+    sortBy = "createdAt", sortOrder = "DESC"
   ) {
-    let query = "SELECT * FROM projects WHERE 1=1";
-    const params = [];
-
-    if (status && status !== "all") {
-      query += " AND status = ?";
-      params.push(status);
-    }
-
-    query += ` ORDER BY ${sortBy} ${sortOrder} LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    db.all(query, params, callback);
+    const { field, order } = normalizeSort(sortBy, sortOrder);
+    const filter = status && status !== "all" ? { status } : {};
+    return Project.find(filter)
+      .sort({ [field]: order })
+      .skip(offset)
+      .limit(limit);
   }
 
-  /**
-   * Get project count (for pagination)
-   */
-  static getProjectCount(status = null, callback) {
-    let query = "SELECT COUNT(*) as count FROM projects WHERE 1=1";
-    const params = [];
-
-    if (status && status !== "all") {
-      query += " AND status = ?";
-      params.push(status);
-    }
-
-    db.get(query, params, callback);
+  static async getProjectCount(status = null) {
+    const filter = status && status !== "all" ? { status } : {};
+    return Project.countDocuments(filter);
   }
 
-  /**
-   * Search projects by name or client
-   */
-  static searchProjects(searchTerm, limit = 50, offset = 0, callback) {
-    const query = `SELECT * FROM projects 
-                   WHERE projectName LIKE ? OR clientName LIKE ? OR email LIKE ?
-                   ORDER BY createdAt DESC
-                   LIMIT ? OFFSET ?`;
-    const params = [`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, limit, offset];
-
-    db.all(query, params, callback);
-  }
-
-  /**
-   * Get a single project by ID
-   */
-  static getProjectById(id, callback) {
-    db.get("SELECT * FROM projects WHERE id = ?", [id], callback);
-  }
-
-  /**
-   * Create a new project
-   */
-  static createProject(projectData, callback) {
-    const {
-      projectName,
-      clientName,
-      phone,
-      email,
-      address,
-      eventType,
-      location,
-      startDate,
-      endDate,
-      totalAmount,
-      advance = 0,
-      balance,
-      status = "Upcoming",
-      notes = "",
-    } = projectData;
-
-    db.run(
-      `INSERT INTO projects (
-        projectName, clientName, phone, email, address, 
-        eventType, location, startDate, endDate, 
-        totalAmount, advance, balance, status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        projectName,
-        clientName,
-        phone,
-        email,
-        address,
-        eventType,
-        location,
-        startDate,
-        endDate,
-        totalAmount,
-        advance,
-        balance || totalAmount - advance,
-        status,
-        notes,
+  static async searchProjects(searchTerm, limit = 50, offset = 0) {
+    const regex = new RegExp(searchTerm, "i");
+    return Project.find({
+      $or: [
+        { projectName: regex },
+        { clientName: regex },
+        { email: regex },
       ],
-      function (err) {
-        if (err) return callback(err, null);
-        callback(null, { id: this.lastID, ...projectData });
-      }
+    })
+      .sort({ createdAt: -1 })
+      .skip(offset)
+      .limit(limit);
+  }
+
+  static async getProjectById(id) {
+    return Project.findById(id);
+  }
+
+  static async createProject(projectData) {
+    const { totalAmount, advance = 0 } = projectData;
+    const balance = projectData.balance ?? totalAmount - advance;
+    const project = new Project({ ...projectData, balance });
+    return project.save();
+  }
+
+  static async updateProject(id, projectData) {
+    const { totalAmount } = projectData;
+    // Fetch current advance to recalculate balance
+    const existing = await Project.findById(id);
+    if (!existing) return null;
+    const advance = existing.advance || 0;
+    const balance = totalAmount - advance;
+    return Project.findByIdAndUpdate(
+      id,
+      { ...projectData, balance },
+      { new: true, runValidators: true }
     );
   }
 
-  /**
-   * Update a project
-   */
-  static updateProject(id, projectData, callback) {
-    const {
-      projectName,
-      clientName,
-      phone,
-      email,
-      address,
-      eventType,
-      location,
-      startDate,
-      endDate,
-      totalAmount,
-      status,
-      notes,
-    } = projectData;
+  static async deleteProject(id) {
+    // Cascade — remove related payments and events
+    const Payment = mongoose.model("Payment");
+    const Event   = mongoose.model("Event");
+    await Payment.deleteMany({ projectId: id });
+    await Event.deleteMany({ projectId: id });
+    await Project.findByIdAndDelete(id);
+    return { success: true, id };
+  }
 
-    db.run(
-      `UPDATE projects SET 
-        projectName = ?, clientName = ?, phone = ?, email = ?, address = ?,
-        eventType = ?, location = ?, startDate = ?, endDate = ?,
-        totalAmount = ?, status = ?, notes = ?, updatedAt = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [
-        projectName,
-        clientName,
-        phone,
-        email,
-        address,
-        eventType,
-        location,
-        startDate,
-        endDate,
-        totalAmount,
-        status,
-        notes,
-        id,
+  static async getProjectsByStatus(status) {
+    return Project.find({ status }).sort({ startDate: 1 });
+  }
+
+  static async getProjectStats() {
+    const [total, completed, ongoing, upcoming, financials] = await Promise.all([
+      Project.countDocuments(),
+      Project.countDocuments({ status: "Completed" }),
+      Project.countDocuments({ status: "Ongoing" }),
+      Project.countDocuments({ status: "Upcoming" }),
+      Project.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$totalAmount" },
+            totalAdvance: { $sum: "$advance" },
+            totalPending: { $sum: "$balance" },
+          },
+        },
+      ]),
+    ]);
+
+    const fin = financials[0] || { totalRevenue: 0, totalAdvance: 0, totalPending: 0 };
+    return {
+      totalProjects:     total,
+      completedProjects: completed,
+      ongoingProjects:   ongoing,
+      upcomingProjects:  upcoming,
+      totalRevenue:      fin.totalRevenue,
+      totalAdvance:      fin.totalAdvance,
+      totalPending:      fin.totalPending,
+    };
+  }
+
+  static async getProjectsByDateRange(startDate, endDate) {
+    return Project.find({
+      $or: [
+        { startDate: { $gte: startDate, $lte: endDate } },
+        { endDate:   { $gte: startDate, $lte: endDate } },
       ],
-      (err) => {
-        if (err) return callback(err, null);
-        
-        // Recalculate balance based on new total amount
-        db.run(
-          `UPDATE projects 
-           SET balance = totalAmount - advance
-           WHERE id = ?`,
-          [id],
-          () => {
-            callback(null, { id, ...projectData });
-          }
-        );
-      }
+    }).sort({ startDate: 1 });
+  }
+
+  static async updateProjectStatus(id, status) {
+    const project = await Project.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
     );
+    return project;
   }
 
-  /**
-   * Delete a project
-   */
-  static deleteProject(id, callback) {
-    // Delete related records first
-    db.run("DELETE FROM payments WHERE projectId = ?", [id], () => {
-      db.run("DELETE FROM events WHERE projectId = ?", [id], () => {
-        db.run("DELETE FROM editing_tasks WHERE projectId = ?", [id], () => {
-          db.run("DELETE FROM deliveries WHERE projectId = ?", [id], () => {
-            db.run("DELETE FROM notes WHERE projectId = ?", [id], () => {
-              db.run("DELETE FROM timeline WHERE projectId = ?", [id], () => {
-                db.run("DELETE FROM projects WHERE id = ?", [id], (err) => {
-                  if (err) return callback(err, null);
-                  callback(null, { success: true, id });
-                });
-              });
-            });
-          });
-        });
-      });
-    });
+  static async archiveProject(id) {
+    return ProjectModel.updateProjectStatus(id, "Archived");
   }
 
-  /**
-   * Get projects by status
-   */
-  static getProjectsByStatus(status, callback) {
-    db.all(
-      "SELECT * FROM projects WHERE status = ? ORDER BY startDate ASC",
-      [status],
-      callback
-    );
-  }
+  static async getProjectWithDetails(id) {
+    const Payment = mongoose.model("Payment");
+    const Event   = mongoose.model("Event");
 
-  /**
-   * Get projects statistics
-   */
-  static getProjectStats(callback) {
-    db.get(
-      `SELECT 
-        COUNT(*) as totalProjects,
-        SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completedProjects,
-        SUM(CASE WHEN status = 'Ongoing' THEN 1 ELSE 0 END) as ongoingProjects,
-        SUM(CASE WHEN status = 'Upcoming' THEN 1 ELSE 0 END) as upcomingProjects,
-        SUM(totalAmount) as totalRevenue,
-        SUM(advance) as totalAdvance,
-        SUM(balance) as totalPending
-       FROM projects`,
-      [],
-      callback
-    );
-  }
+    const project = await Project.findById(id).lean();
+    if (!project) return null;
 
-  /**
-   * Get projects by date range
-   */
-  static getProjectsByDateRange(startDate, endDate, callback) {
-    db.all(
-      `SELECT * FROM projects 
-       WHERE startDate BETWEEN ? AND ? OR endDate BETWEEN ? AND ?
-       ORDER BY startDate ASC`,
-      [startDate, endDate, startDate, endDate],
-      callback
-    );
-  }
+    const [payments, events] = await Promise.all([
+      Payment.find({ projectId: id }).sort({ paymentDate: -1 }),
+      Event.find({ projectId: id }).sort({ eventDate: 1 }),
+    ]);
 
-  /**
-   * Update project status
-   */
-  static updateProjectStatus(id, status, callback) {
-    db.run(
-      "UPDATE projects SET status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
-      [status, id],
-      (err) => {
-        if (err) return callback(err, null);
-        
-        // Add timeline entry
-        db.run(
-          `INSERT INTO timeline (projectId, action, description)
-           VALUES (?, ?, ?)`,
-          [id, "Status Updated", `Project status changed to ${status}`],
-          () => {
-            callback(null, { success: true });
-          }
-        );
-      }
-    );
-  }
-
-  /**
-   * Archive a project
-   */
-  static archiveProject(id, callback) {
-    this.updateProjectStatus(id, "Archived", callback);
-  }
-
-  /**
-   * Get project with related data
-   */
-  static getProjectWithDetails(id, callback) {
-    db.get("SELECT * FROM projects WHERE id = ?", [id], (err, project) => {
-      if (err) return callback(err, null);
-      if (!project) return callback(null, null);
-
-      // Fetch related data
-      db.all(
-        "SELECT * FROM payments WHERE projectId = ? ORDER BY paymentDate DESC",
-        [id],
-        (payErr, payments) => {
-          db.all(
-            "SELECT * FROM events WHERE projectId = ? ORDER BY eventDate ASC",
-            [id],
-            (evErr, events) => {
-              db.all(
-                "SELECT * FROM notes WHERE projectId = ? ORDER BY createdAt DESC",
-                [id],
-                (notErr, notes) => {
-                  project.payments = payments || [];
-                  project.events = events || [];
-                  project.notes = notes || [];
-                  callback(null, project);
-                }
-              );
-            }
-          );
-        }
-      );
-    });
+    project.payments = payments;
+    project.events   = events;
+    project.notes    = [];
+    return project;
   }
 }
 

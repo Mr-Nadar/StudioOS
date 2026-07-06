@@ -1,235 +1,205 @@
-const db = require("../database/database");
+const mongoose = require("mongoose");
+
+const paymentSchema = new mongoose.Schema(
+  {
+    projectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Project",
+      required: true,
+    },
+    amount:          { type: Number, required: true, min: 0 },
+    paymentDate:     { type: String, required: true },
+    paymentMode:     { type: String, default: "Cash" },
+    remarks:         { type: String, default: "" },
+    referenceNumber: { type: String, default: "" },
+  },
+  { timestamps: true }
+);
+
+const Payment = mongoose.model("Payment", paymentSchema);
 
 class PaymentModel {
   /**
    * Get all payments for a specific project
    */
-  static getPaymentsByProject(projectId, callback) {
-    db.all(
-      `SELECT * FROM payments WHERE projectId = ? ORDER BY paymentDate DESC, id DESC`,
-      [projectId],
-      callback
-    );
+  static async getPaymentsByProject(projectId) {
+    return Payment.find({ projectId }).sort({ paymentDate: -1, createdAt: -1 });
   }
 
   /**
    * Get a single payment by ID
    */
-  static getPaymentById(id, callback) {
-    db.get(
-      `SELECT * FROM payments WHERE id = ?`,
-      [id],
-      callback
-    );
+  static async getPaymentById(id) {
+    return Payment.findById(id);
   }
 
   /**
-   * Get all payments (with optional pagination)
+   * Get all payments (with optional pagination), joined with project info
    */
-  static getAllPayments(limit = 50, offset = 0, callback) {
-    db.all(
-      `SELECT p.*, pr.projectName, pr.clientName FROM payments p
-       LEFT JOIN projects pr ON p.projectId = pr.id
-       ORDER BY p.paymentDate DESC, p.id DESC
-       LIMIT ? OFFSET ?`,
-      [limit, offset],
-      callback
-    );
+  static async getAllPayments(limit = 50, offset = 0) {
+    return Payment.find()
+      .populate("projectId", "projectName clientName")
+      .sort({ paymentDate: -1, createdAt: -1 })
+      .skip(offset)
+      .limit(limit);
   }
 
   /**
    * Get total payment count
    */
-  static getPaymentCount(callback) {
-    db.get(
-      `SELECT COUNT(*) as count FROM payments`,
-      [],
-      callback
-    );
+  static async getPaymentCount() {
+    return Payment.countDocuments();
   }
 
   /**
    * Get payment statistics
    */
-  static getPaymentStats(callback) {
-    db.get(
-      `SELECT 
-        COUNT(*) as totalPayments,
-        SUM(amount) as totalAmount,
-        AVG(amount) as averageAmount,
-        MIN(amount) as minAmount,
-        MAX(amount) as maxAmount
-       FROM payments`,
-      [],
-      callback
+  static async getPaymentStats() {
+    const result = await Payment.aggregate([
+      {
+        $group: {
+          _id:           null,
+          totalPayments: { $sum: 1 },
+          totalAmount:   { $sum: "$amount" },
+          averageAmount: { $avg: "$amount" },
+          minAmount:     { $min: "$amount" },
+          maxAmount:     { $max: "$amount" },
+        },
+      },
+    ]);
+    return (
+      result[0] || {
+        totalPayments: 0,
+        totalAmount:   0,
+        averageAmount: 0,
+        minAmount:     0,
+        maxAmount:     0,
+      }
     );
   }
 
   /**
    * Get payments within a date range
    */
-  static getPaymentsByDateRange(startDate, endDate, callback) {
-    db.all(
-      `SELECT * FROM payments 
-       WHERE paymentDate BETWEEN ? AND ?
-       ORDER BY paymentDate DESC`,
-      [startDate, endDate],
-      callback
-    );
+  static async getPaymentsByDateRange(startDate, endDate) {
+    return Payment.find({
+      paymentDate: { $gte: startDate, $lte: endDate },
+    }).sort({ paymentDate: -1 });
   }
 
   /**
-   * Create a new payment
+   * Create a new payment and update the related project's advance & balance
    */
-  static createPayment(paymentData, callback) {
-    const {
-      projectId,
-      amount,
-      paymentDate,
-      paymentMode,
-      remarks,
-      referenceNumber,
-    } = paymentData;
+  static async createPayment(paymentData) {
+    const { projectId, amount, paymentDate, paymentMode, remarks, referenceNumber } =
+      paymentData;
 
-    db.run(
-      `INSERT INTO payments (projectId, amount, paymentDate, paymentMode, remarks, referenceNumber)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [projectId, amount, paymentDate, paymentMode, remarks, referenceNumber],
-      function (err) {
-        if (err) return callback(err, null);
+    const Project = mongoose.model("Project");
 
-        // Update project advance and balance
-        db.run(
-          `UPDATE projects 
-           SET advance = advance + ?, 
-               balance = totalAmount - (advance + ?),
-               updatedAt = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [amount, amount, projectId],
-          (updateErr) => {
-            if (updateErr) return callback(updateErr, null);
+    const payment = await new Payment({
+      projectId, amount, paymentDate,
+      paymentMode: paymentMode || "Cash",
+      remarks:     remarks     || "",
+      referenceNumber: referenceNumber || "",
+    }).save();
 
-            // Add timeline entry
-            db.run(
-              `INSERT INTO timeline (projectId, action, description)
-               VALUES (?, ?, ?)`,
-              [projectId, "Payment Recorded", `₹${amount} received via ${paymentMode}`],
-              () => {
-                callback(null, { id: this.lastID, ...paymentData });
-              }
-            );
-          }
-        );
-      }
-    );
+    // Update project advance and recalculate balance
+    await Project.findByIdAndUpdate(projectId, [
+      {
+        $set: {
+          advance: { $add: ["$advance", amount] },
+          balance: { $subtract: ["$totalAmount", { $add: ["$advance", amount] }] },
+        },
+      },
+    ]);
+
+    return payment;
   }
 
   /**
-   * Update a payment
+   * Update a payment and adjust the project's advance & balance accordingly
    */
-  static updatePayment(id, paymentData, callback) {
+  static async updatePayment(id, paymentData) {
     const { amount, paymentDate, paymentMode, remarks, referenceNumber } = paymentData;
 
-    // Get old payment to calculate difference
-    db.get(
-      `SELECT projectId, amount FROM payments WHERE id = ?`,
-      [id],
-      (err, oldPayment) => {
-        if (err) return callback(err);
+    const Project = mongoose.model("Project");
 
-        const amountDifference = amount - oldPayment.amount;
+    const oldPayment = await Payment.findById(id);
+    if (!oldPayment) return null;
 
-        db.run(
-          `UPDATE payments 
-           SET amount = ?, paymentDate = ?, paymentMode = ?, remarks = ?, referenceNumber = ?, updatedAt = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [amount, paymentDate, paymentMode, remarks, referenceNumber, id],
-          (updateErr) => {
-            if (updateErr) return callback(updateErr);
+    const amountDifference = amount - oldPayment.amount;
 
-            // Update project if amount changed
-            if (amountDifference !== 0) {
-              db.run(
-                `UPDATE projects 
-                 SET advance = advance + ?,
-                     balance = totalAmount - (advance + ?),
-                     updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = ?`,
-                [amountDifference, amountDifference, oldPayment.projectId],
-                () => {
-                  callback(null, { id, ...paymentData });
-                }
-              );
-            } else {
-              callback(null, { id, ...paymentData });
-            }
-          }
-        );
-      }
+    const updated = await Payment.findByIdAndUpdate(
+      id,
+      { amount, paymentDate, paymentMode, remarks, referenceNumber },
+      { new: true, runValidators: true }
     );
+
+    if (amountDifference !== 0) {
+      await Project.findByIdAndUpdate(oldPayment.projectId, [
+        {
+          $set: {
+            advance: { $add: ["$advance", amountDifference] },
+            balance: {
+              $subtract: ["$totalAmount", { $add: ["$advance", amountDifference] }],
+            },
+          },
+        },
+      ]);
+    }
+
+    return updated;
   }
 
   /**
-   * Delete a payment
+   * Delete a payment and revert the project's advance & balance
    */
-  static deletePayment(id, callback) {
-    // Get payment details before deletion
-    db.get(
-      `SELECT projectId, amount FROM payments WHERE id = ?`,
-      [id],
-      (err, payment) => {
-        if (err) return callback(err);
+  static async deletePayment(id) {
+    const Project = mongoose.model("Project");
 
-        db.run(
-          `DELETE FROM payments WHERE id = ?`,
-          [id],
-          (deleteErr) => {
-            if (deleteErr) return callback(deleteErr);
+    const payment = await Payment.findById(id);
+    if (!payment) return { success: false };
 
-            // Revert project advance and balance
-            db.run(
-              `UPDATE projects 
-               SET advance = advance - ?,
-                   balance = totalAmount - (advance - ?),
-                   updatedAt = CURRENT_TIMESTAMP
-               WHERE id = ?`,
-              [payment.amount, payment.amount, payment.projectId],
-              () => {
-                callback(null, { success: true });
-              }
-            );
-          }
-        );
-      }
-    );
+    await Payment.findByIdAndDelete(id);
+
+    // Revert project advance and recalculate balance
+    await Project.findByIdAndUpdate(payment.projectId, [
+      {
+        $set: {
+          advance: { $subtract: ["$advance", payment.amount] },
+          balance: {
+            $subtract: ["$totalAmount", { $subtract: ["$advance", payment.amount] }],
+          },
+        },
+      },
+    ]);
+
+    return { success: true };
   }
 
   /**
    * Get payment mode distribution
    */
-  static getPaymentModeStats(callback) {
-    db.all(
-      `SELECT paymentMode, COUNT(*) as count, SUM(amount) as totalAmount
-       FROM payments
-       GROUP BY paymentMode
-       ORDER BY totalAmount DESC`,
-      [],
-      callback
-    );
+  static async getPaymentModeStats() {
+    return Payment.aggregate([
+      {
+        $group: {
+          _id:         "$paymentMode",
+          count:       { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+        },
+      },
+      { $sort: { totalAmount: -1 } },
+      { $project: { paymentMode: "$_id", count: 1, totalAmount: 1, _id: 0 } },
+    ]);
   }
 
   /**
-   * Get pending payments
+   * Get projects with a pending balance (balance > 0)
    */
-  static getPendingPayments(callback) {
-    db.all(
-      `SELECT p.*, p.projectName, p.clientName, p.balance
-       FROM projects p
-       WHERE p.balance > 0
-       ORDER BY p.updatedAt DESC`,
-      [],
-      callback
-    );
+  static async getPendingPayments() {
+    const Project = mongoose.model("Project");
+    return Project.find({ balance: { $gt: 0 } }).sort({ updatedAt: -1 });
   }
 }
 
