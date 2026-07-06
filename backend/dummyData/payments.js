@@ -1,0 +1,87 @@
+// payments.js — dummy payment data
+// Fields match the Payment mongoose schema.
+// Note: clientName and projectName are used as symbolic links for seeding logic.
+
+module.exports = [
+  {
+    clientName:      "Rahul & Priya Sharma",
+    projectName:     "Sharma-Patel Wedding",
+    amount:          100000,
+    paymentDate:     "2025-08-10",
+    paymentMode:     "Bank Transfer",
+    remarks:         "Booking advance (40%)",
+    referenceNumber: "IMPS/522212345678",
+  },
+  {
+    clientName:      "Rahul & Priya Sharma",
+    projectName:     "Sharma-Patel Wedding",
+    amount:          150000,
+    paymentDate:     "2025-11-20",
+    paymentMode:     "Cheque",
+    remarks:         "Final settlement after delivery",
+    referenceNumber: "CHQ-001234",
+  },
+  {
+    clientName:      "Ankita & Vikram Mehra",
+    projectName:     "Mehra Reception Night",
+    amount:          90000,
+    paymentDate:     "2025-09-01",
+    paymentMode:     "UPI",
+    remarks:         "Advance 50%",
+    referenceNumber: "UPI/52449191919",
+  },
+  {
+    clientName:      "Ankita & Vikram Mehra",
+    projectName:     "Mehra Reception Night",
+    amount:          90000,
+    paymentDate:     "2025-10-25",
+    paymentMode:     "Cash",
+    remarks:         "Final cash payment",
+    referenceNumber: "",
+  },
+  {
+    clientName:      "Rohan & Kavita Joshi",
+    projectName:     "Joshi 25th Anniversary",
+    amount:          60000,
+    paymentDate:     "2026-02-15",
+    paymentMode:     "Bank Transfer",
+    remarks:         "Advance",
+    referenceNumber: "NEFT/N1234567890",
+  },
+  {
+    clientName:      "Rohan & Kavita Joshi",
+    projectName:     "Joshi 25th Anniversary",
+    amount:          60000,
+    paymentDate:     "2026-03-25",
+    paymentMode:     "UPI",
+    remarks:         "Cleared before album print",
+    referenceNumber: "UPI/6082121331",
+  },
+  {
+    clientName:      "Divya & Arun Kumar",
+    projectName:     "Kumar-Shankar Wedding",
+    amount:          100000,
+    paymentDate:     "2026-01-10",
+    paymentMode:     "Bank Transfer",
+    remarks:         "Booking amount",
+    referenceNumber: "IMPS/60111222333",
+  },
+  {
+    clientName:      "Tech Horizon Pvt Ltd",
+    projectName:     "Tech Horizon Annual Day 2025",
+    amount:          200000,
+    paymentDate:     "2025-11-01",
+    paymentMode:     "Bank Transfer",
+    remarks:         "Purchase Order Advance",
+    referenceNumber: "RTGS/SBIN00012345",
+  },
+  {
+    clientName:      "Tech Horizon Pvt Ltd",
+    projectName:     "Tech Horizon Annual Day 2025",
+    amount:          80000,
+    paymentDate:     "2025-12-28",
+    paymentMode:     "Bank Transfer",
+    remarks:         "Final Settlement against Inv #1044",
+    referenceNumber: "NEFT/HDFC0001234",
+  }
+];
