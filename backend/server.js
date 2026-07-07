@@ -1,40 +1,47 @@
 require("dotenv").config();
 
 const express = require("express");
-const cors    = require("cors");
+const cors = require("cors");
 const mongoose = require("mongoose");
 
-const connectDB     = require("./config/db");
+const connectDB = require("./config/db");
 const projectRoutes = require("./routes/projectRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
-const eventRoutes   = require("./routes/eventRoutes");
-const clientRoutes  = require("./routes/clientRoutes");
+const eventRoutes = require("./routes/eventRoutes");
+const clientRoutes = require("./routes/clientRoutes");
 
 const app = express();
 
-// ─── Connect to MongoDB ─────────────────────────────────────────────────────
+// Connect to MongoDB
 connectDB();
 
-// ─── Middleware ─────────────────────────────────────────────────────────────
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// ─── Root Route ─────────────────────────────────────────────────────────────
+// Root Route
 app.get("/", (req, res) => {
-  res.json({ message: "📸 StudioOS Backend Running 🚀" });
+  res.json({
+    message: "📸 StudioOS Backend Running 🚀",
+  });
 });
 
-// ─── API Routes ─────────────────────────────────────────────────────────────
+// Routes
 app.use("/api/projects", projectRoutes);
 app.use("/api/payments", paymentRoutes);
-app.use("/api/events",   eventRoutes);
-app.use("/api/clients",  clientRoutes);
+app.use("/api/events", eventRoutes);
+app.use("/api/clients", clientRoutes);
 
-// ─── Health Check ───────────────────────────────────────────────────────────
+// Health Check
 app.get("/api/health", (req, res) => {
   const state = mongoose.connection.readyState;
-  // 0: disconnected, 1: connected, 2: connecting, 3: disconnecting
-  const stateMap = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
+
+  const stateMap = {
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+  };
 
   if (state === 1) {
     return res.json({
@@ -52,19 +59,22 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// ─── 404 Handler ────────────────────────────────────────────────────────────
+// 404 Handler
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found" });
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
 });
 
-// ─── Start Server ────────────────────────────────────────────────────────────
+// Server
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log("======================================");
   console.log("📸 StudioOS Backend Started");
-  console.log(`🚀 Server:       http://localhost:${PORT}`);
+  console.log(`🚀 Server: http://localhost:${PORT}`);
   console.log(`📂 Projects API: http://localhost:${PORT}/api/projects`);
-  console.log(`❤️  Health Check: http://localhost:${PORT}/api/health`);
+  console.log(`❤️ Health Check: http://localhost:${PORT}/api/health`);
   console.log("======================================");
 });
