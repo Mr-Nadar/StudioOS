@@ -1,14 +1,27 @@
 const mongoose = require("mongoose");
 
+let isConnected = false;
+
 const connectDB = async () => {
+  if (isConnected) {
+    return;
+  }
+
+  if (mongoose.connection.readyState === 1) {
+    isConnected = true;
+    return;
+  }
+
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      dbName: "studioos", 
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      dbName: "studioOs",
     });
-    console.log("✅ MongoDB Connected Successfully");
+
+    isConnected = true;
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (err) {
-    console.error("❌ MongoDB Connection Failed:", err.message);
-    process.exit(1);
+    console.error("❌ MongoDB Connection Failed:", err);
+    throw err;
   }
 };
 
